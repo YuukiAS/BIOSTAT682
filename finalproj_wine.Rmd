@@ -1,0 +1,98 @@
+---
+title: "finalproj_wine"
+author: "Noelle"
+date: "2022-12-10"
+output: html_document
+---
+
+```{r}
+redwine <- read.csv("winequality-red.csv",sep=";")
+redwine
+```
+
+```{r}
+whitewine1 <- read.csv("winequality-white.csv",sep=";")
+#so much white wine data it's slowing down the model, half it to save time
+numWhiteWineData = length(whitewine1$quality)
+whiteWineNum = numWhiteWineData/4
+whitewine = whitewine1[1:whiteWineNum,]
+```
+
+```{r}
+#combine both datasets to do hierarchical modeling
+indicesRed = rep(0,length(redwine$quality))
+indicesWhite = rep(1,length(whitewine$quality))
+
+redWineWithIndices = cbind(redwine,"Index"=indicesRed)
+whiteWineWithIndices = cbind(whitewine,"Index"=indicesWhite)
+wineData = rbind(redWineWithIndices,whiteWineWithIndices)
+wineData
+```
+```{r}
+require(R2jags)
+#gather data variables
+fixAcid = wineData$fixed.acidity
+volAcid = wineData$volatile.acidity
+citAcid = wineData$citric.acid
+resSugar = wineData$residual.sugar
+chlorides = wineData$chlorides
+freeSulfDiox = wineData$free.sulfur.dioxide
+totalSulfDiox = wineData$total.sulfur.dioxide
+density = wineData$density
+pH = wineData$pH
+sulphates = wineData$sulphates
+alc = wineData$alcohol
+y = wineData$quality
+indices = wineData$Index
+J = 2
+N = length(wineData$quality)
+
+save.parms = c("beta","betay","mu")
+wine.data = c("y","fixAcid","volAcid","citAcid","resSugar","chlorides","freeSulfDiox","totalSulfDiox","density","pH","sulphates","alc","indices","N","J")
+
+```
+
+First bayesian linear regression attempt, no ridge:
+```{r}
+wine.model = function()
+{
+  for (i in 1:N) {
+     y[i] ~ dnorm(mu[indices[i]+1,i],tau) #could do tau*k bc precision
+     #indices[i] gets the cluster number
+     mu[indices[i]+1,i] <- 
+          betay[indices[i]+1,1] #intercept
+          + betay[indices[i]+1,2]*fixAcid[i] #fixed acidity
+          + betay[indices[i]+1,3]*volAcid[i] #volatile acidity
+          + betay[indices[i]+1,4]*citAcid[i] #citric acid
+          + betay[indices[i]+1,5]*resSugar[i] #residual sugars
+          + betay[indices[i]+1,6]*chlorides[i] #chlorides
+          + betay[indices[i]+1,7]*freeSulfDiox[i] #free sulfate dioxide
+          + betay[indices[i]+1,8]*totalSulfDiox[i] #total sulfate dioxide
+          + betay[indices[i]+1,9]*density[i] #density
+          + betay[indices[i]+1,10]*pH[i] #pH
+          + betay[indices[i]+1,11]*sulphates[i] #sulphates
+          + betay[indices[i]+1,12]*alc[i] #alcohol
+  }
+  for (j in 1:J) {
+    for (k in 1:12) {
+      betay[j,k] ~dnorm(beta[k],tau2)
+    }
+  }      
+  for (k in 1:12) {
+    beta[k] ~dnorm(0,1e-6)
+  }
+   tau ~ dgamma(1e-6,1e-6) #t-distribution, dt, look at lecture 4 example 3
+   tau2 ~ dgamma(1e-6,1e-6)
+}
+```
+
+```{r}
+wine.out = jags(data=wine.data,parameters.to.save=save.parms,model.file=wine.model,
+                n.chains=3,n.iter=30000,n.burnin=5000,n.thin=1)
+```
+
+```{r}
+#obtain stats of main effect, mu
+mean(wine.out$BUGSoutput$)
+```
+
