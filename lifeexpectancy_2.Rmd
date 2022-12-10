@@ -1,0 +1,164 @@
+---
+title: "finalproj_lifeexpectancy_2"
+author: "Noelle"
+date: "2022-12-10"
+output: html_document
+---
+
+```{r}
+lifeData1 <- read.csv("Life_Expectancy_Data.csv",sep=",")
+
+#data cleaup, remove all datapoints with NAs
+lifeData2 = na.omit(lifeData1)
+
+#get only lifeData that's < 2014
+lifeData = lifeData2[lifeData2$Year < 2014,]
+lifeData
+```
+
+
+```{r}
+require(R2jags)
+
+status = rep(0,length(lifeData$Year))
+
+#set up dummy/index variables
+#years 2000-2015, 16 year variables, all 1 = 2015
+for (i in 1:length(lifeData$Year)) {
+  status[i] = ifelse(lifeData$Status[i]=="Developing",1,0)
+}
+
+
+
+save.parms = c("beta")
+life_expectancy.data = c("year","y","mortality","infant_deaths","alcohol", "status",
+                         "percExp","hepB","measles","BMI","under5Deaths","polio","totalExp","dipth","hivaids","gdp","pop","thin1019","thin59",
+                         "incomeComp","school","N","J","indices","ident")
+#make year numeric
+year = rep(1,length(lifeData$Year))
+for (i in 1:length(lifeData$Year)) {
+  if (lifeData$Year[i] == 2000){
+    year[i] = 0
+  } else if (lifeData$Year[i] == 2001){
+    year[i] = 1
+  } else if (lifeData$Year[i] == 2002){
+    year[i] = 2
+  } else if (lifeData$Year[i] == 2003){
+    year[i] = 3
+  } else if (lifeData$Year[i] == 2004){
+    year[i] = 4
+  } else if (lifeData$Year[i] == 2005){
+    year[i] = 5
+  } else if (lifeData$Year[i] == 2006){
+    year[i] = 6
+  } else if (lifeData$Year[i] == 2007){
+    year[i] = 7
+  } else if (lifeData$Year[i] == 2008){
+    year[i] = 8
+  } else if (lifeData$Year[i] == 2009){
+    year[i] = 9
+  } else if (lifeData$Year[i] == 2010){
+    year[i] = 10
+  } else if (lifeData$Year[i] == 2011){
+    year[i] = 11
+  } else if (lifeData$Year[i] == 2012){
+    year[i] = 12
+  } else if (lifeData$Year[i] == 2013){
+    year[i] = 13
+  } else if (lifeData$Year[i] == 2014){
+    year[i] = 14
+  } else if (lifeData$Year[i] == 2015){
+    year[i] = 15
+  }
+}
+mortality = lifeData$"Adult.Mortality"
+infant_deaths = lifeData$"infant.deaths"
+alcohol = lifeData$"Alcohol"
+percExp = lifeData$"percentage.expenditure"
+hepB = lifeData$"Hepatitis.B"
+measles = lifeData$"Measles"
+BMI = lifeData$"BMI"
+under5Deaths = lifeData$"under.five.deaths"
+polio = lifeData$"Polio"
+totalExp = lifeData$"Total.expenditure"
+dipth = lifeData$"Diphtheria"
+hivaids = lifeData$"HIV.AIDS"
+gdp = lifeData$"GDP"
+pop = lifeData$"Population"
+thin1019 = lifeData$"thinness..1.19.years"
+thin59 = lifeData$"thinness.5.9.years"
+incomeComp = lifeData$"Income.composition.of.resources"
+school = lifeData$"Schooling"
+y = lifeData$"Life.expectancy"
+N = length(lifeData$Country) #go through each point
+J = length(unique(lifeData$Country)) #go through each country
+ident = diag(35)
+
+
+```
+
+```{r}
+#assign a column of indices, each cluster has its own unique index
+#so 193 indices
+indicesDict = c(unique(lifeData$Country))
+indices = rep(0,N)
+for (i in 1:N) {
+  indices[i] = which(indicesDict==lifeData$Country[i])
+}
+```
+
+```{r}
+life_expectancy.model = function()
+{
+  for (i in 1:N) {
+     y[i] ~ dnorm(mu[indices[i],i],tau) #could do tau*k bc precision
+     #indices[i] gets the cluster number
+     mu[indices[i],i] <- 
+          betay[indices[i],1] #intercept
+          + betay[indices[i],2]*year[i] #year
+          + betay[indices[i],3]*mortality[i] #mortality #started at 17
+          + betay[indices[i],4]*infant_deaths[i] #infant_deaths
+          + betay[indices[i],5]*alcohol[i] #alcohol
+          + betay[indices[i],6]*percExp[i] #percentage expenditure
+          + betay[indices[i],7]*hepB[i] #hepatitis B
+          + betay[indices[i],8]*measles[i] #meases
+          + betay[indices[i],9]*BMI[i] #BMI
+          + betay[indices[i],10]*under5Deaths[i] #under 5 deaths
+          + betay[indices[i],11]*polio[i] #Polio
+          + betay[indices[i],12]*totalExp[i] #total expenditure
+          + betay[indices[i],13]*dipth[i] #diptheria
+          + betay[indices[i],14]*hivaids[i] #hiv.aids
+          + betay[indices[i],15]*gdp[i] #gdp
+          + betay[indices[i],16]*pop[i] #population
+          + betay[indices[i],17]*thin1019[i] #thinness relevance 10-19 yrs old
+          + betay[indices[i],18]*thin59[i] #thinness relevance 5-9 yrs old
+          + betay[indices[i],19]*incomeComp[i] #income composition
+          + betay[indices[i],20]*school[i] #years of schooling
+          + betay[indices[i],21]*status[i] #status, developing or not
+  }
+  for (j in 1:J) {
+    for (k in 1:21) {
+      betay[j,k] ~dnorm(beta[k],tau2)
+    }
+  }      
+  for (k in 1:21) {
+    beta[k] ~dnorm(0,1e-6)
+  }
+   tau ~ dgamma(1e-6,1e-6) #t-distribution, dt, look at lecture 4 example 3
+   tau2 ~ dgamma(1e-6,1e-6)
+}
+```
+
+```{r}
+life_expectancy.out = jags(data=life_expectancy.data,parameters.to.save=save.parms,model.file=life_expectancy.model,
+                n.chains=3,n.iter=10000,n.burnin=1000,n.thin=1)
+```
+
+```{r}
+print(life_expectancy.out)
+```
+
+```{r}
+
+```
+
