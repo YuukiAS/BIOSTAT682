@@ -28,9 +28,7 @@ for (i in 1:length(lifeData$Year)) {
   status[i] = ifelse(lifeData$Status[i]=="Developing",1,0)
 }
 
-
-
-save.parms = c("beta")
+save.parms = c("beta","betay")
 life_expectancy.data = c("year","y","mortality","infant_deaths","alcohol", "status",
                          "percExp","hepB","measles","BMI","under5Deaths","polio","totalExp","dipth","hivaids","gdp","pop","thin1019","thin59",
                          "incomeComp","school","N","J","indices","ident")
@@ -159,6 +157,137 @@ print(life_expectancy.out)
 ```
 
 ```{r}
+X_dropped2 = lifeData[,!names(lifeData) %in% c("Country","Year","Status")]
 
+X = cbind("Year"=year,X_dropped2,"Status"=status)
+X
+```
+
+
+```{r}
+#get beta averages for each country
+#betay[1,1], betay[1,2], betay[1,3], ..., betay[1,21] means coefficients for country 1, covariates 1-21
+betaAverages = life_expectancy.out$BUGSoutput$mean$betay
+#want to go through each row of lifeData, identify the country, then get the necessary betas by indexing into betaAverages
+fit = rep(0,length(lifeData$Country))
+for (i in 1:length(lifeData$Country)) {
+  idx = indices[i]
+  betas = betaAverages[idx,]
+  prediction = data.matrix(X[i,]) %*% c(betas[1:21]) #take mean betas and use those to calculate fit
+  fit[i] = prediction
+}
+r = as.vector(y-fit)
+plot(fit,r,pch=19)
+abline(h=0,col=2)
+#once get these betas, multiply them by the lifeData to get the prediction
+#store this prediction in a vector, fit
+#at the end, get r by doing as.matrix(y-fit) and plot this
+```
+```{r}
+qqnorm(r)
+qqline(r)
+```
+
+Repeat above by getting rid of similar covariates and place a strong prior on the intercept variable ~ N(mean,variance)
+```{r}
+#calculate mean life expectancy for each country
+countries = unique(lifeData$Country)
+meanLifeExpecs = rep(0,length(unique(lifeData$Country)))
+for (i in 1:length(countries)) {
+  #get all data with these countries
+  country = countries[i]
+  allThisCountryData = lifeData[lifeData$Country == country, ]
+  #calculate mean life expectancy, put it in meanLifeExpects
+  meanLifeExpec = mean(allThisCountryData$"Life.expectancy")
+  meanLifeExpecs[i] = meanLifeExpec
+}
+meanLifeExpecs
+```
+
+Remove similar covariates: under.five.deaths, percetange-expenditure, thinness 1.19
+
+
+```{r}
+life_expectancy_2.model = function()
+{
+  for (i in 1:N) {
+     y[i] ~ dnorm(mu[indices[i],i],tau) #could do tau*k bc precision
+     #indices[i] gets the cluster number
+     mu[indices[i],i] <- 
+          betay[indices[i],1] #intercept
+          + betay[indices[i],2]*year[i] #year
+          + betay[indices[i],3]*mortality[i] #mortality #started at 17
+          + betay[indices[i],4]*infant_deaths[i] #infant_deaths
+          + betay[indices[i],5]*alcohol[i] #alcohol
+          #+ betay[indices[i],6]*percExp[i] #percentage expenditure
+          + betay[indices[i],6]*hepB[i] #hepatitis B
+          + betay[indices[i],7]*measles[i] #meases
+          + betay[indices[i],8]*BMI[i] #BMI
+          #+ betay[indices[i],10]*under5Deaths[i] #under 5 deaths
+          + betay[indices[i],9]*polio[i] #Polio
+          + betay[indices[i],10]*totalExp[i] #total expenditure
+          + betay[indices[i],11]*dipth[i] #diptheria
+          + betay[indices[i],12]*hivaids[i] #hiv.aids
+          + betay[indices[i],13]*gdp[i] #gdp
+          + betay[indices[i],14]*pop[i] #population
+          #+ betay[indices[i],17]*thin1019[i] #thinness relevance 10-19 yrs old
+          + betay[indices[i],15]*thin59[i] #thinness relevance 5-9 yrs old
+          + betay[indices[i],16]*incomeComp[i] #income composition
+          + betay[indices[i],17]*school[i] #years of schooling
+          + betay[indices[i],18]*status[i] #status, developing or not
+  }
+  for (j in 1:J) {
+    betay[j,1] ~ dnorm(meanLifeExpecs[j],1e6)
+    for (k in 2:18) {
+      betay[j,k] ~dnorm(beta[k],tau2)
+    }
+  }      
+  for (k in 1:18) {
+    beta[k] ~dnorm(0,1e-6)
+  }
+   tau ~ dgamma(1e-6,1e-6) #t-distribution, dt, look at lecture 4 example 3
+   tau2 ~ dgamma(1e-6,1e-6)
+}
+```
+
+```{r}
+life_expectancy.data = c("year","y","mortality","infant_deaths","alcohol", "status",
+                         "percExp","hepB","measles","BMI","under5Deaths","polio","totalExp","dipth","hivaids","gdp","pop","thin1019","thin59",
+                         "incomeComp","school","N","J","indices","ident","meanLifeExpecs")
+life_expectancy_2.out = jags(data=life_expectancy.data,parameters.to.save=save.parms,model.file=life_expectancy_2.model,
+                n.chains=3,n.iter=20000,n.burnin=1000,n.thin=1)
+```
+
+```{r}
+print(life_expectancy_2.out)
+```
+
+```{r}
+#need to create X such that it now doesn't have percExp, under5deaths, thinness119
+X_dropped2 = lifeData[,!names(lifeData) %in% c("Country","Year","Status","percentage.expenditure","under.five.deaths","thinness..1.19.years")]
+
+X = cbind("Year"=year,X_dropped2,"Status"=status)
+X
+```
+
+
+```{r}
+betaAverages = life_expectancy_2.out$BUGSoutput$mean$betay
+#want to go through each row of lifeData, identify the country, then get the necessary betas by indexing into betaAverages
+fit = rep(0,length(lifeData$Country))
+for (i in 1:length(lifeData$Country)) {
+  idx = indices[i]
+  betas = betaAverages[idx,]
+  prediction = data.matrix(X[i,]) %*% c(betas[1:18]) #take mean betas and use those to calculate fit
+  fit[i] = prediction
+}
+r = as.vector(y-fit)
+plot(fit,r,pch=19)
+abline(h=0,col=2)
+```
+
+```{r}
+qqnorm(r)
+qqline(r)
 ```
 
