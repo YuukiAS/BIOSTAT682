@@ -1,0 +1,371 @@
+ ---
+title: "lifeexpectancy_continents"
+author: "Noelle"
+date: "2022-12-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyr)
+library(dplyr)
+library(corrplot)
+
+
+lifeData <- read.csv("Life_Expectancy_v5.csv")
+
+dim(lifeData)
+head(lifeData)
+```
+
+
+
+```{r}
+lifeData_train <- lifeData %>% filter(Year < 2013)
+lifeData_test <- lifeData %>% filter(Year >= 2013)
+dim(lifeData_train)
+dim(lifeData_test)
+```
+
+```{r}
+library(corrplot)
+
+lifeData_train.matrix <- as.matrix(lifeData_train)[,-(1:4)]
+lifeData_train.matrix <- apply(lifeData_train.matrix, 2, as.numeric)
+corrplot(cor(lifeData_train.matrix))
+```
+
+```{r}
+library(R2jags)
+
+status = rep(0,nrow(lifeData_train))
+for (i in 1:nrow(lifeData_train)) {
+  status[i] = ifelse(lifeData_train$Status[i]=="Developing",1,2)
+}
+
+continent = as.numeric(as.factor(lifeData_train$Continent))
+mortality = lifeData_train$"Adult.Mortality"
+infant_deaths = lifeData_train$"infant.deaths"
+alcohol = lifeData_train$"Alcohol"
+percExp = lifeData_train$"percentage.expenditure"
+hepB = lifeData_train$"Hepatitis.B"
+measles = lifeData_train$"Measles" / 100
+BMI = lifeData_train$"BMI"
+under5Deaths = lifeData_train$"under.five.deaths"
+polio = lifeData_train$"Polio"
+totalExp = lifeData_train$"Total.expenditure"
+dipth = lifeData_train$"Diphtheria"
+hivaids = lifeData_train$"HIV.AIDS"
+gdp = lifeData_train$"GDP" 
+pop = lifeData_train$"Population" / 10000000
+thin1019 = lifeData_train$"thinness.1.19.years"
+thin59 = lifeData_train$"thinness.5.9.years"
+incomeComp = lifeData_train$"Income.composition.of.resources"
+school = lifeData_train$"Schooling"
+y = lifeData_train$"Life.expectancy"
+N = length(lifeData_train$Country) #go through each point
+J = length(unique(lifeData_train$Country)) #go through each country
+
+# encode country
+indicesDict = c(unique(lifeData_train$Country))
+indices = rep(0,N)
+for (i in 1:N) {
+  indices[i] = which(indicesDict==lifeData_train$Country[i])
+}
+```
+
+```{r}
+save.parms.1 = c("beta","alpha", "alphay","betay")
+life_expectancy.data.1 = c("y","mortality","alcohol", 
+                            "hepB","measles","BMI","polio","totalExp",
+                            "dipth","hivaids","gdp","pop","thin1019",
+                            "incomeComp","school","N","J","indices", "continent")                         
+```
+
+```{r}
+life_expectancy.model.1 = function()
+{
+  for (i in 1:N) {
+     y[i] ~ dnorm(mu[i],tau*k[i]) 
+     mu[i] <- 
+          alphay[indices[i]] # intercept
+          + betay[continent[i],1]*mortality[i] 
+          + betay[continent[i],2]*alcohol[i] 
+          + betay[continent[i],3]*hepB[i] 
+          + betay[continent[i],4]*measles[i] 
+          + betay[continent[i],5]*BMI[i] 
+          + betay[continent[i],6]*polio[i] 
+          + betay[continent[i],7]*totalExp[i] 
+          + betay[continent[i],8]*dipth[i] 
+          + betay[continent[i],9]*hivaids[i] 
+          + betay[continent[i],10]*gdp[i] 
+          + betay[continent[i],11]*pop[i] 
+          + betay[continent[i],12]*thin1019[i] 
+          + betay[continent[i],13]*incomeComp[i] 
+          + betay[continent[i],14]*school[i] 
+     k[i] ~ dgamma(3/2,3/2)
+  }
+  alpha ~ dnorm(60, 1e-4)
+  for (j in 1:J) {
+    alphay[j] ~ dnorm(alpha, tau2)
+  }      
+
+  for (k in 1:14) {
+    beta[k] ~ dnorm(0,1e-3)
+  }
+  
+  for(j in 1:6) {
+      for (k in 1:14) {
+      betay[j,k] ~ dnorm(beta[k], tau2)
+    }
+  }
+  tau ~ dgamma(1e-6,1e-6)
+  tau2 ~ dgamma(1e-6,1e-6)
+  #allows for t-distribution prior with dof = 5, dof= 8
+  #k~ dgamma(3/2,3/2)
+}
+```
+
+```{r}
+life_expectancy.out.1 = jags(data=life_expectancy.data.1,parameters.to.save=save.parms.1,model.file=life_expectancy.model.1,
+                           n.chains=3,n.iter=20000,n.burnin=5000,n.thin=1)
+print(life_expectancy.out.1, digits = 6)
+```
+
+```{r}
+attach.jags(life_expectancy.out.1)
+
+# alphay.1 <- mcmc(alphay)
+# alphay.1 <- apply(alphay.1, 2, mean)
+# betay.1 <- mcmc(betay)
+# betay.1 <- apply(betay.1, 2, mean)
+# gamma.1 <- mcmc(gamma)
+# gamma.1 <- apply(gamma.1, 2, mean)
+```
+
+```{r}
+alphay.1 <- apply(mcmc(alphay),2,mean)
+head(alphay.1)
+```
+
+```{r}
+betay_matrix <- apply(mcmc(betay), 2:3, mean)
+```
+
+```{r}
+
+X = cbind(mortality, alcohol, hepB, measles, BMI, polio,
+            totalExp, dipth, hivaids, gdp, pop, thin1019, incomeComp, school)
+
+fit = rep(NA, nrow(lifeData_train))
+for (i in 1:nrow(lifeData_train)) {
+    fit[i] = alphay.1[indices[i]]
+    continent_id = which(lifeData_train[i,]$Continent == levels(as.factor(lifeData_train$Continent)))
+    for (j in 1:14) {
+        fit[i] = fit[i] + betay_matrix[continent_id, j] * X[i,j]
+    }
+}
+
+```
+
+```{r}
+r = fit - lifeData_train[,4]
+```
+
+```{r}
+plot(fit, r)
+abline(h =0)
+qqnorm(r)
+qqline(r)
+```
+Trying with half-Cauchy prior and t-structured error with dof = 3
+```{r}
+life_expectancy.model.2 = function()
+{
+  for (i in 1:N) {
+     y[i] ~ dnorm(mu[i],tau*k[i]) 
+     mu[i] <-
+          alphay[indices[i]] # intercept
+          + betay[continent[i],1]*mortality[i] 
+          + betay[continent[i],2]*alcohol[i] 
+          + betay[continent[i],3]*hepB[i] 
+          + betay[continent[i],4]*measles[i] 
+          + betay[continent[i],5]*BMI[i] 
+          + betay[continent[i],6]*polio[i] 
+          + betay[continent[i],7]*totalExp[i] 
+          + betay[continent[i],8]*dipth[i] 
+          + betay[continent[i],9]*hivaids[i] 
+          + betay[continent[i],10]*gdp[i] 
+          + betay[continent[i],11]*pop[i] 
+          + betay[continent[i],12]*thin1019[i] 
+          + betay[continent[i],13]*incomeComp[i] 
+          + betay[continent[i],14]*school[i] 
+     k[i] ~ dgamma(3/2,3/2)
+  }
+  alpha ~ dnorm(60, 1e-4)
+  for (j in 1:J) {
+    alphay[j] ~ dnorm(alpha, tau2)
+  }      
+
+  for (k in 1:14) {
+    beta[k] ~ dnorm(0,1e-3)
+  }
+  
+  for(j in 1:6) {
+      for (k in 1:14) {
+      betay[j,k] ~ dnorm(beta[k], tau2*tauOfLambda2)
+    }
+  }
+  tau ~ dgamma(1e-6,1e-6)
+  tau2 ~ dgamma(1e-6,1e-6)
+  tauOfLambda2 ~ dgamma(1/2,1/a) #this will need to be inversed, will already be inversed
+  a ~ dgamma(1/2,1)
+  #allows for t-distribution prior with dof = 5, dof= 8
+  #k~ dgamma(3/2,3/2)
+}
+```
+
+```{r}
+save.parms.1 = c("beta","alpha", "alphay","betay","tau")
+life_expectancy.out.2 = jags(data=life_expectancy.data.1,parameters.to.save=save.parms.1,model.file=life_expectancy.model.2,
+                           n.chains=3,n.iter=20000,n.burnin=5000,n.thin=1)
+print(life_expectancy.out.2, digits = 6)
+```
+
+```{r}
+data = life_expectancy.out.2$BUGSoutput$summary[,8:9]
+```
+
+
+
+
+```{r}
+data
+```
+
+
+
+```{r}
+attach.jags(life_expectancy.out.2)
+
+# alphay.1 <- mcmc(alphay)
+# alphay.1 <- apply(alphay.1, 2, mean)
+# betay.1 <- mcmc(betay)
+# betay.1 <- apply(betay.1, 2, mean)
+# gamma.1 <- mcmc(gamma)
+# gamma.1 <- apply(gamma.1, 2, mean)
+```
+
+```{r}
+alphay.2 <- apply(mcmc(alphay),2,mean)
+head(alphay.2)
+```
+
+```{r}
+betay_matrix <- apply(mcmc(betay), 2:3, mean)
+```
+
+```{r}
+
+X = cbind(mortality, alcohol, hepB, measles, BMI, polio,
+            totalExp, dipth, hivaids, gdp, pop, thin1019, incomeComp, school)
+
+fit = rep(NA, nrow(lifeData_train))
+for (i in 1:nrow(lifeData_train)) {
+    fit[i] = alphay.2[indices[i]]
+    continent_id = which(lifeData_train[i,]$Continent == levels(as.factor(lifeData_train$Continent)))
+    for (j in 1:14) {
+        fit[i] = fit[i] + betay_matrix[continent_id, j] * X[i,j]
+    }
+}
+```
+
+```{r}
+r = fit - lifeData_train[,4]
+```
+
+```{r}
+plot(fit, r)
+abline(h =0)
+qqnorm(r)
+qqline(r)
+```
+
+
+Do the testing
+```{r}
+status_test = rep(0,nrow(lifeData_test))
+for (i in 1:nrow(lifeData_test)) {
+  status_test[i] = ifelse(lifeData_test$Status[i]=="Developing",0,1)
+}
+mortality_test = lifeData_test$"Adult.Mortality"
+alcohol_test = lifeData_test$"Alcohol"
+hepB_test = lifeData_test$"Hepatitis.B"
+measles_test = lifeData_test$"Measles" / 100
+BMI_test = lifeData_test$"BMI"
+polio_test = lifeData_test$"Polio"
+totalExp_test = lifeData_test$"Total.expenditure"
+dipth_test = lifeData_test$"Diphtheria"
+hivaids_test = lifeData_test$"HIV.AIDS"
+gdp_test = lifeData_test$"GDP"
+pop_test = lifeData_test$"Population" / 10000000
+thin1019_test = lifeData_test$"thinness.1.19.years"
+incomeComp_test = lifeData_test$"Income.composition.of.resources"
+school_test = lifeData_test$"Schooling"
+
+indicesDict_test = c(unique(lifeData_test$Country))
+indices_test = rep(0,nrow(lifeData_test))
+for (i in 1:nrow(lifeData_test)) {
+  indices_test[i] = which(indicesDict==lifeData_test$Country[i])
+}
+```
+
+```{r}
+X_test = cbind(mortality_test, alcohol_test, hepB_test, measles_test, BMI_test, polio_test,
+            totalExp_test, dipth_test, hivaids_test, gdp_test, pop_test, thin1019_test, incomeComp_test, school_test)
+
+fit_test = rep(NA, nrow(lifeData_test))
+for (i in 1:nrow(lifeData_test)) {
+    fit_test[i] = alphay.2[indices_test[i]]
+    continent_id = which(lifeData_test[i,]$Continent == levels(as.factor(lifeData_test$Continent)))
+    for (j in 1:14) {
+        fit_test[i] = fit_test[i] + betay_matrix[continent_id, j] * X_test[i,j]
+    }
+}
+```
+
+```{r}
+rmse <- function(x,y) {
+    return(sqrt(mean((x-y)^2)))
+}
+rmse(fit_test, lifeData_test[,4])
+```
+
+```{r}
+lifeData
+```
+
+
+Calculate LPML (practice) for this Cauchy distribution
+```{r}
+X = cbind(rep(1,length(lifeData$Country)),mortality,alcohol,hepB,measles,BMI,polio,totalExp,dipth,hivaids,gdp,pop,thin1019,incomeComp,school)
+#need to take mean of alphay row-wise, get 45000 x 1 matrix
+interceptMeans = apply(alphay,1,mean)
+#cbind interceptMeans and beta
+beta2 = cbind(c(interceptMeans),beta)
+mean1 =  matrix(0,nrow(beta),length(lifeData$Country))
+sd1 = 1/sqrt(tau[,1])
+mean1 = beta2%*%t(X)
+tmp1 = matrix(0,nrow(beta),length(lifeData$Country))
+for (i in 1:length(lifeData$Country)) tmp1[,i] = 1/dnorm(y[i],mean1[,i],sd1[i])
+print("line 346")
+cpoinv1 = apply(tmp1,2,mean)
+print("line 348")
+lpml1 = sum(-log(cpoinv1))
+```
+
+```{r}
+calcLPMLNorm <- function(X,beta,) {
+   Function body 
+}
+```
+
